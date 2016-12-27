@@ -182,8 +182,8 @@ public class NetworkCard {
                             ACK ack = i.next();
                             if (ack.getDestination() == deviceNumber
                                     && ack.getSource() == frame.getHeader().getDestination()) {
+                                // Check if ACK is for the most recent request, otherwise ignore it
                                 if (ack.getNumber() == currentAckNumber) {
-                                    // ACK received, move on to the next element in the queue
                                     System.out.println("*** " + deviceName + " received an ACK, moving on!");
                                     currentAckNumber = 1 - currentAckNumber;
                                     break ackAwait;
@@ -247,12 +247,12 @@ public class NetworkCard {
 
                         if ((receivedByte & 0xFF) == 0x7E) break;
 
-                        System.out.println(deviceName + " RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
+                        //System.out.println(deviceName + " RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
 
                         // Unstuff if escaped.
                         if (receivedByte == 0x7D) {
                             receivedByte = receiveByte();
-                            System.out.println(deviceName + " ESCAPED RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
+                            //System.out.println(deviceName + " ESCAPED RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
                         }
 
                         bytePayload[bytePayloadIndex] = receivedByte;
