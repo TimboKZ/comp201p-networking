@@ -46,25 +46,29 @@ public class Main {
 
         // Currently noise level is set to 0.0 volts on wire (the 0.0 value).
         // Try increasing it to 3.5 volts to see if the transmission is reliable.
-        ThermalNoise thermalNoise = new ThermalNoise("Thermal Noise", 0.0, wire);
+        ThermalNoise thermalNoise = new ThermalNoise("Thermal Noise", 0.4, wire);
         thermalNoise.start();
 
         // Set oscilloscope monitoring the wire voltage.
         Oscilloscope oscilloscope = new Oscilloscope("Oscilloscope", wire);
         oscilloscope.start();
 
-        // Send a data frame across the link from network card 1 to network card 2.
-        DataFrame myMessage = new DataFrame("Hello World", 2);
+        DataFrame myMessage = new DataFrame("Tim", 2);
         System.out.println("\n *** SENDING DATA FRAME: " + myMessage + "\n");
         networkCard1.send(myMessage);
 
-        myMessage = new DataFrame("Earth calling Mars", 2);
-        System.out.println("\n *** SENDING DATA FRAME: " + myMessage + "\n");
-        networkCard1.send(myMessage);
-
-        myMessage = new DataFrame("Hello Mars", 2);
-        System.out.println("\n *** SENDING DATA FRAME: " + myMessage + "\n");
-        networkCard1.send(myMessage);
+//        // Send a data frame across the link from network card 1 to network card 2.
+//        DataFrame myMessage = new DataFrame("Hello World", 2);
+//        System.out.println("\n *** SENDING DATA FRAME: " + myMessage + "\n");
+//        networkCard1.send(myMessage);
+//
+//        myMessage = new DataFrame("Earth calling Mars", 2);
+//        System.out.println("\n *** SENDING DATA FRAME: " + myMessage + "\n");
+//        networkCard1.send(myMessage);
+//
+//        myMessage = new DataFrame("Hello Mars", 2);
+//        System.out.println("\n *** SENDING DATA FRAME: " + myMessage + "\n");
+//        networkCard1.send(myMessage);
 
         // Continuously read data frames received by network card 2.
         while (true) {
