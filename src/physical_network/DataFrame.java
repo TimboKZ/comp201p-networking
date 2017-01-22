@@ -31,6 +31,7 @@ public class DataFrame {
         this.data = new Data(payload);
         this.header = new Header();
         this.header.setPayloadLength(this.data.getLength());
+        this.header.setDestination(0);
     }
 
     public DataFrame(byte[] payload, int destination) {

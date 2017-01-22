@@ -27,10 +27,11 @@ import java.util.concurrent.*;
 
 public class NetworkCard {
 
+
     /**
-     * For how long to wait for an ACK, in milliseconds.
+     * Amount of resent attempts before giving up
      */
-    private final int TIMEOUT = 20000;
+    private final int MAX_RESEND = 6;
 
     /**
      * Set of all received ACKs
@@ -49,9 +50,15 @@ public class NetworkCard {
     private final double LOW_VOLTAGE = -2.5;
 
     // Default value for a signal pulse width that should be used in milliseconds.
-    private final int PULSE_WIDTH = 200;
+    private final int PULSE_WIDTH = 50;
 
     // Default value for maximum payload size in bytes.
+
+    /**
+     * For how long to wait for an ACK, in milliseconds. ACK is always 5 bytes long.
+     */
+    private final int TIMEOUT = 10000;
+
     private final int MAX_PAYLOAD_SIZE = 1500;
 
     // Default value for input & output queue sizes.
@@ -110,11 +117,44 @@ public class NetworkCard {
         private int source8;
         private int destination8;
         private int number8;
+        private int checksum16;
+
+        public static ACK fromReceivedBytes(byte[] bytes) throws Exception {
+            if(bytes.length != 5) {
+                throw new Exception("Invalid byte array supplied to ACK factory!");
+            }
+            int checksum16 = ((bytes[3] & 0xFF) << 8) | (bytes[4] & 0xFF);
+            return new ACK(bytes[0] & 0xFF, bytes[1] & 0xFF, bytes[2] & 0xFF, checksum16);
+        }
+
+        public ACK(int source8, int destination8, int number8, int checksum16) {
+            this(source8, destination8, number8);
+            this.checksum16 = checksum16;
+        }
 
         public ACK(int source8, int destination8, int number8) {
             this.source8 = source8;
             this.destination8 = destination8;
             this.number8 = number8;
+            this.checksum16 = calculateChecksum();
+        }
+
+        public boolean verifyChecksum() {
+            return this.checksum16 == this.calculateChecksum();
+        }
+
+        private int calculateChecksum() {
+            int[] integers = new int[]{
+                    source8,
+                    destination8,
+                    number8
+            };
+            int sum = 0;
+            for (int integer : integers) {
+                int localSum = sum + integer;
+                sum = (localSum & 0xFFFF) + (localSum >> 16);
+            }
+            return ~sum & 0xFFFF;
         }
 
         public int getSource() {
@@ -133,7 +173,9 @@ public class NetworkCard {
             return new byte[]{
                     (byte) (this.source8 & 0xFF),
                     (byte) (this.getDestination() & 0xFF),
-                    (byte) (this.getNumber() & 0xFF)
+                    (byte) (this.getNumber() & 0xFF),
+                    (byte) ((this.checksum16 >> 8) & 0xFF),
+                    (byte) (this.checksum16 & 0xFF)
             };
         }
     }
@@ -169,29 +211,41 @@ public class NetworkCard {
                     this.transmitFrame(frame);
 
                     // Wait for ACK before proceeding, resend if no ACK is received
-                    System.out.println("*** " + deviceName + " sent a frame, waiting for ACK...");
-                    long startTime = System.currentTimeMillis();
-                    ackAwait:
-                    while (true) {
-                        if (System.currentTimeMillis() - startTime > TIMEOUT) {
-                            System.out.println("*** " + deviceName + " timed out while waiting for ACK! Resending frame...");
-                            transmitFrame(frame);
-                            startTime = System.currentTimeMillis();
-                        }
-                        for (Iterator<ACK> i = ackSet.iterator(); i.hasNext(); ) {
-                            ACK ack = i.next();
-                            if (ack.getDestination() == deviceNumber
-                                    && ack.getSource() == frame.getHeader().getDestination()) {
-                                // Check if ACK is for the most recent request, otherwise ignore it
-                                if (ack.getNumber() == currentAckNumber) {
-                                    System.out.println("*** " + deviceName + " received an ACK, moving on!");
-                                    currentAckNumber = 1 - currentAckNumber;
-                                    break ackAwait;
+                    if (frame.getHeader().getDestination() == 0) {
+                        System.out.println("*** " + deviceName + " broadcasted a frame to everyone!");
+                    } else {
+                        System.out.println("*** " + deviceName + " sent a frame, waiting for ACK...");
+                        long startTime = System.currentTimeMillis();
+                        int attempts = 1;
+                        ackAwait:
+                        while (true) {
+                            if (System.currentTimeMillis() - startTime > TIMEOUT) {
+                                if (attempts > MAX_RESEND) {
+                                    System.out.println("*** " + deviceName + " exhausted all resend attempts! Giving up on frame...");
+                                    break;
                                 }
-                                i.remove();
+                                attempts++;
+                                System.out.println("*** " + deviceName + " timed out while waiting for ACK! Resending frame...");
+                                transmitFrame(frame);
+                                startTime = System.currentTimeMillis();
                             }
+                            for (Iterator<ACK> i = ackSet.iterator(); i.hasNext(); ) {
+                                ACK ack = i.next();
+                                if (ack.getDestination() == deviceNumber
+                                        && ack.getSource() == frame.getHeader().getDestination()) {
+                                    // Check if ACK is for the most recent request, otherwise ignore it
+                                    if (ack.getNumber() == currentAckNumber) {
+                                        System.out.println("*** " + deviceName + " received an ACK, moving on!");
+                                        currentAckNumber = 1 - currentAckNumber;
+                                        break ackAwait;
+                                    } else {
+                                        System.out.println("*** " + deviceName + " received duplicate ACK, ignoring...");
+                                    }
+                                    i.remove();
+                                }
+                            }
+                            sleep(TIMEOUT / 10);
                         }
-                        sleep(TIMEOUT / 10);
                     }
                 }
             } catch (InterruptedException except) {
@@ -242,17 +296,18 @@ public class NetworkCard {
                     int bytePayloadIndex = 0;
                     byte receivedByte;
 
+                    // Updated this part of the code to unstuff bytes correctly
                     while (true) {
                         receivedByte = receiveByte();
 
                         if ((receivedByte & 0xFF) == 0x7E) break;
 
-                        //System.out.println(deviceName + " RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
+                        System.out.println(deviceName + " RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
 
                         // Unstuff if escaped.
                         if (receivedByte == 0x7D) {
                             receivedByte = receiveByte();
-                            //System.out.println(deviceName + " ESCAPED RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
+                            System.out.println(deviceName + " ESCAPED RECEIVED BYTE = " + Integer.toHexString(receivedByte & 0xFF));
                         }
 
                         bytePayload[bytePayloadIndex] = receivedByte;
@@ -262,18 +317,19 @@ public class NetworkCard {
 
                     byte[] relevantBytes = Arrays.copyOfRange(bytePayload, 0, bytePayloadIndex);
 
-                    // If its an acknowledgement that is addressed to us, add it to the queue, otherwise treat it as a frame
-                    if (relevantBytes.length == 3) {
-                        int destination = relevantBytes[1] & 0xFF;
+                    // If its an acknowledgement that is addressed to us, add it to the set, otherwise treat it as a frame
+                    if (relevantBytes.length == 5) {
 
-                        // Not addressed to us, ignore
-                        if (destination != deviceNumber) continue;
+                        ACK receivedAck = ACK.fromReceivedBytes(relevantBytes);
 
-                        ackSet.add(new ACK(
-                                relevantBytes[0] & 0xFF,
-                                destination,
-                                relevantBytes[2] & 0xFF
-                        ));
+                        if(!receivedAck.verifyChecksum()) {
+                            System.out.println("*** " + deviceName + " received corrupted ACK! Ignoring.");
+                        }
+
+                        // ACK is not addressed to us. Ignore.
+                        if (receivedAck.getDestination() != deviceNumber) continue;
+
+                        ackSet.add(receivedAck);
                         continue;
                     }
 
@@ -293,17 +349,18 @@ public class NetworkCard {
 
                     // Check if data frame addressed to us
                     int destination = header.getDestination();
-                    if (destination != deviceNumber) {
+                    if (destination != deviceNumber && destination != 0) {
                         System.out.println(
                                 "*** " + deviceName + " received data frame addressed to " + destination + ". Ignoring."
                         );
                         continue;
                     }
 
-                    // Check if we've already processed this frame (we have to send the ACK anyway)
+                    // Check if we've already processed this frame (we might have to send the ACK anyway)
                     Integer lastAckNumber = ackMap.get(header.getSource());
                     if (lastAckNumber != null && lastAckNumber == header.getAck()) {
                         // We've already processed this frame, ignore it
+                        System.out.println("*** " + deviceName + " received duplicate frame! Sending ACK and ignoring contents.");
                         continue;
                     }
                     ackMap.put(header.getSource(), header.getAck());
@@ -311,20 +368,28 @@ public class NetworkCard {
                     // Block receiving data if queue full
                     inputQueue.put(frame);
 
-                    // Frame is not corrupted and is addressed to us, send ACK
-                    System.out.println(
-                            "*** " + deviceName + " received a frame from " + header.getSource() + ", adding ACK to queue!"
-                    );
-                    ACK ack = new ACK(
-                            header.getDestination(),
-                            header.getSource(),
-                            header.getAck()
-                    );
-                    outputQueue.add(ack);
+                    if (destination == 0) {
+                        System.out.println(
+                                "*** " + deviceName + " received a frame from " + header.getSource() + " addressed to everyone, not sending an ACK."
+                        );
+                    } else {
+                        // Frame is not corrupted and is addressed to us, send ACK
+                        System.out.println(
+                                "*** " + deviceName + " received a frame from " + header.getSource() + ", adding ACK to queue!"
+                        );
+                        ACK ack = new ACK(
+                                header.getDestination(),
+                                header.getSource(),
+                                header.getAck()
+                        );
+                        outputQueue.add(ack);
+                    }
                 }
 
             } catch (InterruptedException except) {
                 System.out.println(deviceName + " Interrupted: " + getName());
+            } catch (Exception e) {
+                System.out.println(e.getMessage());
             }
 
         }
