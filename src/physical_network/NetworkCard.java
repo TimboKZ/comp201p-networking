@@ -50,14 +50,14 @@ public class NetworkCard {
     private final double LOW_VOLTAGE = -2.5;
 
     // Default value for a signal pulse width that should be used in milliseconds.
-    private final int PULSE_WIDTH = 50;
+    private final int PULSE_WIDTH = 100;
 
     // Default value for maximum payload size in bytes.
 
     /**
      * For how long to wait for an ACK, in milliseconds. ACK is always 5 bytes long.
      */
-    private final int TIMEOUT = 10000;
+    private final int TIMEOUT = 14000;
 
     private final int MAX_PAYLOAD_SIZE = 1500;
 
